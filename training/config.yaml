@@ -1,0 +1,6 @@
+REPO_ID:  "google/paligemma-3b-pt-224"
+FINETUNED_MODEL_ID: "AqsaK/paligemma_finetuned_census_data_subset"
+MAX_LENGTH: 1500
+WANDB_PROJECT: "paligemma"
+WANDB_NAME: "paligemma_1880_subset"
+HF_DATASET: "AqsaK/testdataHW5"
