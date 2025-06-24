@@ -203,7 +203,7 @@ def eval_collate_fn(examples):
   return input_ids, attention_mask, pixel_values, answers
 
 
-train_dataloader = DataLoader(train_dataset, collate_fn=train_collate_fn, batch_size=2, shuffle=True)
+train_dataloader = DataLoader(train_dataset, collate_fn=train_collate_fn, batch_size=2, shuffle=True, num_workers=4)
 input_ids, token_type_ids, attention_mask, pixel_values, labels = next(iter(train_dataloader))
 
 print(processor.batch_decode(input_ids))
@@ -212,7 +212,7 @@ for id, label in zip(input_ids[0][-30:], labels[0][-30:]):
   print(processor.decode([id.item()]), processor.decode([label.item()]))
 
 
-val_dataloader = DataLoader(val_dataset, collate_fn=eval_collate_fn, batch_size=2, shuffle=False)
+val_dataloader = DataLoader(val_dataset, collate_fn=eval_collate_fn, batch_size=2, shuffle=False, num_workers=4)
 input_ids, attention_mask, pixel_values, answers = next(iter(val_dataloader))
 
 print(processor.batch_decode(input_ids))
