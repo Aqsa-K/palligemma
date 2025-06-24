@@ -289,8 +289,8 @@ class PaliGemmaModelPLModule(L.LightningModule):
 device = "cuda"
 model = PaliGemmaForConditionalGeneration.from_pretrained(REPO_ID, torch_dtype=torch.bfloat16).to(device)
 
-# for param in model.vision_tower.parameters():
-#     param.requires_grad = False
+for param in model.vision_tower.parameters():
+    param.requires_grad = False
 
 # for param in model.multi_modal_projector.parameters():
 #     param.requires_grad = False
