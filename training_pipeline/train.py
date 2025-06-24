@@ -29,6 +29,9 @@ from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 from huggingface_hub import HfApi
 
 from lightning.pytorch.loggers import WandbLogger
+import os
+
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 
 
