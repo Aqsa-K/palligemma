@@ -1,0 +1,8 @@
+git+https://github.com/huggingface/transformers.git
+datasets==3.6.0 
+lightning==2.5.1.post0
+pytorch-lightning==2.5.1.post0
+numpy==2.0.2
+pandas==2.2.2
+wandb==0.20.1
+huggingface-hub==0.32.4

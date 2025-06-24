@@ -4,3 +4,4 @@ MAX_LENGTH: 1500
 WANDB_PROJECT: "paligemma"
 WANDB_NAME: "paligemma_1880_subset"
 HF_DATASET: "AqsaK/testdataHW5"
+PROMPT_TOKEN: "extract JSON."
