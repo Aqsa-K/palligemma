@@ -292,8 +292,8 @@ model = PaliGemmaForConditionalGeneration.from_pretrained(REPO_ID, torch_dtype=t
 for param in model.vision_tower.parameters():
     param.requires_grad = False
 
-# for param in model.multi_modal_projector.parameters():
-#     param.requires_grad = False
+for param in model.multi_modal_projector.parameters():
+    param.requires_grad = False
 
 
 config = {"max_epochs": 2,
