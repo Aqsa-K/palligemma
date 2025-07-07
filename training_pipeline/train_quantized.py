@@ -439,7 +439,7 @@ quarter_steps = max(1, steps_per_epoch // 4)
         
 checkpoint_callback = ModelCheckpoint(
     dirpath="checkpoints/",                      # where to save
-    filename="donut-epoch{epoch:02d}-step{step}",# naming convention
+    filename="paligemma-epoch{epoch:02d}-step{step}",# naming convention
     save_top_k=-1,                               # if you want *all* quarter‐epoch checkpoints; set -1 to keep every save
     every_n_train_steps=quarter_steps,           # save every quarter‐epoch (in # of steps)
     verbose=True,
@@ -473,7 +473,7 @@ trainer = L.Trainer(
         gradient_clip_val=config.get("gradient_clip_val"),
         val_check_interval=config["val_check_interval"],
         precision="16-mixed",
-        limit_val_batches=5,
+        limit_val_batches=0.1,
         num_sanity_val_steps=0,
         logger=wandb_logger,
         callbacks=[PushToHubCallback(), step_logger, push_cb, ShowFewSamples(every_n_epochs=1, num_samples=2)],
