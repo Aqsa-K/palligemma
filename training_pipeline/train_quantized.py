@@ -59,6 +59,7 @@ print(f"Image size: {image.size}")
 ground_truth = json.loads(example["ground_truth"])
 ground_truth["gt_parse"]
 
+processor = PaliGemmaProcessor.from_pretrained(REPO_ID)
 
 class CustomDataset(Dataset):
     """
@@ -77,11 +78,14 @@ class CustomDataset(Dataset):
 
         self.split = split
         self.sort_json_key = sort_json_key
+        self.max_threshold_limit = 3820  # max length of tokenized sequence
 
         self.dataset = load_dataset(dataset_name_or_path, split=self.split)
         self.dataset_length = len(self.dataset)
 
         self.gt_token_sequences = []
+        self.valid_indices = []  # indices of valid samples that are below the max threshold limit
+        idx = 0
         for sample in self.dataset:
             ground_truth = json.loads(sample["ground_truth"])
             if "gt_parses" in ground_truth:  # when multiple ground truths are available, e.g., docvqa
@@ -91,15 +95,33 @@ class CustomDataset(Dataset):
                 assert "gt_parse" in ground_truth and isinstance(ground_truth["gt_parse"], dict)
                 gt_jsons = [ground_truth["gt_parse"]]
 
-            self.gt_token_sequences.append(
-                [
-                    self.json2token(
-                        gt_json,
-                        sort_json_key=self.sort_json_key,
-                    )
-                    for gt_json in gt_jsons  # load json from list of json
-                ]
-            )
+            token_seqs = [
+                self.json2token(gt_json, sort_json_key=self.sort_json_key)
+                for gt_json in gt_jsons
+            ]
+
+            toks = processor.tokenizer(token_seqs[0], add_special_tokens=True)
+            len_tokens = len(toks["input_ids"])
+
+            if len_tokens >= self.max_threshold_limit:
+              idx+=1
+              continue
+
+            self.valid_indices.append(idx)
+            self.gt_token_sequences.append(token_seqs)
+            idx+=1
+
+            self.dataset_length = len(self.valid_indices)
+
+            # self.gt_token_sequences.append(
+            #     [
+            #         self.json2token(
+            #             gt_json,
+            #             sort_json_key=self.sort_json_key,
+            #         )
+            #         for gt_json in gt_jsons  # load json from list of json
+            #     ]
+            # )
 
     def json2token(self, obj: Any, sort_json_key: bool = True):
         """
@@ -140,7 +162,8 @@ class CustomDataset(Dataset):
             image : the original Receipt image
             target_sequence : tokenized ground truth sequence
         """
-        sample = self.dataset[idx]
+        true_idx = self.valid_indices[idx]
+        sample = self.dataset[true_idx]
 
         # print("inside get item")
 
@@ -156,7 +179,7 @@ val_dataset = CustomDataset(HF_DATASET, split="validation")
 
 
 
-processor = PaliGemmaProcessor.from_pretrained(REPO_ID)
+
 # The number of image tokens for PaliGemma is available as image_seq_length
 num_image_tokens = processor.image_seq_length
 print(num_image_tokens)
@@ -310,18 +333,18 @@ model.print_trainable_parameters()
 #trainable params: 11,298,816 || all params: 2,934,634,224 || trainable%: 0.38501616002417344
 
 
-config = {"max_epochs": 2,
-          "val_check_interval": 0.1, # how many times we want to validate during an epoch
-          "check_val_every_n_epoch": 1,
-          "gradient_clip_val": 1.0,
-          "accumulate_grad_batches": 1,
-          "lr": 1e-4,
-          "batch_size": 1,
+config = {"max_epochs": config_yaml["MAX_EPOCHS"],
+          "val_check_interval": config_yaml["VAL_CHECK_INTERVAL"], # how many times we want to validate during an epoch
+          "check_val_every_n_epoch": config_yaml["CHECK_VAL_EVERY_N_EPOCH"], # how many epochs we want to validate
+          "gradient_clip_val": config_yaml["GRADIENT_CLIP_VAL"], # gradient clipping value
+          "accumulate_grad_batches": config_yaml["ACCUMULATE_GRAD_BATCHES"], # how many batches to accumulate gradients before updating weights
+          "lr": config_yaml["LR"], # learning rate
+          "batch_size": config_yaml["BATCH_SIZE"], # batch size
           # "seed":2022,
-          "num_nodes": 1,
+          "num_nodes": config_yaml["NUM_NODES"], # number of nodes to use for training
           # "warmup_steps": 50,
-          "result_path": "./result",
-          "verbose": True,
+          "result_path": config_yaml["RESULT_PATH"], # path to save results
+          "verbose": config_yaml["VERBOSE"], # whether to print validation results
 }
 
 model_module = PaliGemmaModelPLModule(config, processor, model)
@@ -403,20 +426,6 @@ class PushOnCheckpoint(Callback):
                 repo_id=self.hf_model_name,
                 commit_message=f"Checkpoint {os.path.basename(new_ckpt)}"
             )
-        
-        if new_ckpt and new_ckpt != self._last_ckpt:
-            self._last_ckpt = new_ckpt
-            print(f"➡️ Pushing new checkpoint to Hub: {os.path.basename(new_ckpt)}")
-
-            pl_module.model.push_to_hub(
-                repo_id=self.hf_model_name,
-                commit_message=f"Checkpoint {os.path.basename(new_ckpt)}"
-            )
-            # Push processor/config
-            pl_module.processor.push_to_hub(
-                repo_id=self.hf_model_name,
-                commit_message=f"Checkpoint {os.path.basename(new_ckpt)}"
-            )
 
 
 class StepLogger(Callback):
@@ -445,22 +454,10 @@ checkpoint_callback = ModelCheckpoint(
     verbose=True,
 )
 
-# checkpoint_callback = ModelCheckpoint(
-#     dirpath=c"checkpoints/",
-#     filename='epoch{epoch:02d}-val_edit_dist',
-#     monitor='val_edit_distance',
-#     mode='min',
-#     save_top_k=-1,
-#     save_last=True,
-#     every_n_train_steps=5,
-#     save_on_train_epoch_end=True,
-#     verbose=True
-# )
-
 push_cb = PushOnCheckpoint(checkpoint_callback=checkpoint_callback,
                            hf_model_name=hf_model_name)
 
-# early_stop_callback = EarlyStopping(monitor="val_edit_distance", patience=5, verbose=True, mode="min")
+early_stop_callback = EarlyStopping(monitor="val_edit_distance", patience=5, verbose=True, mode="min")
 
 wandb_logger = WandbLogger(project=WANDB_PROJECT, name=WANDB_NAME)
 
@@ -473,7 +470,8 @@ trainer = L.Trainer(
         gradient_clip_val=config.get("gradient_clip_val"),
         val_check_interval=config["val_check_interval"],
         precision="16-mixed",
-        limit_val_batches=0.1,
+        limit_val_batches=config_yaml["LIMIT_VAL_BATCHES"],
+        # limit_train_batches=config_yaml["LIMIT_TRAIN_BATCHES"],
         num_sanity_val_steps=0,
         logger=wandb_logger,
         callbacks=[PushToHubCallback(), step_logger, push_cb, ShowFewSamples(every_n_epochs=1, num_samples=2)],
