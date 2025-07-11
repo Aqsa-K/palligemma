@@ -457,9 +457,11 @@ checkpoint_callback = ModelCheckpoint(
 push_cb = PushOnCheckpoint(checkpoint_callback=checkpoint_callback,
                            hf_model_name=hf_model_name)
 
-early_stop_callback = EarlyStopping(monitor="val_edit_distance", patience=5, verbose=True, mode="min")
+early_stop_callback = EarlyStopping(monitor="val_edit_distance", patience=7, verbose=True, mode="min")
 
 wandb_logger = WandbLogger(project=WANDB_PROJECT, name=WANDB_NAME)
+
+print(torch.cuda.memory_summary())
 
 trainer = L.Trainer(
         accelerator="gpu",
