@@ -8,6 +8,7 @@ from transformers import AutoProcessor
 from torch.utils.data import DataLoader
 import numpy as np
 import yaml
+import time
 
 
 from transformers import AutoProcessor
@@ -46,6 +47,7 @@ MAX_LENGTH = config_yaml["MAX_LENGTH"]
 WANDB_PROJECT = config_yaml["WANDB_PROJECT"]
 WANDB_NAME = config_yaml["WANDB_NAME"]
 PROMPT = "extract JSON."
+MAX_THRESHOLD_LIMIT_DATA = config_yaml["MAX_THRESHOLD_LIMIT_DATA"]
 
 dataset = load_dataset(HF_DATASET)
 
@@ -78,7 +80,7 @@ class CustomDataset(Dataset):
 
         self.split = split
         self.sort_json_key = sort_json_key
-        self.max_threshold_limit = 3820  # max length of tokenized sequence
+        self.max_threshold_limit = MAX_THRESHOLD_LIMIT_DATA  # max length of tokenized sequence
 
         self.dataset = load_dataset(dataset_name_or_path, split=self.split)
         self.dataset_length = len(self.dataset)
@@ -248,6 +250,7 @@ class PaliGemmaModelPLModule(L.LightningModule):
         self.model = model
 
         self.batch_size = config.get("batch_size")
+        self.val_batch_size = config.get("val_batch_size") if config.get("val_batch_size") else self.batch_size
 
     def training_step(self, batch, batch_idx):
 
@@ -266,6 +269,10 @@ class PaliGemmaModelPLModule(L.LightningModule):
 
     def validation_step(self, batch, batch_idx, dataset_idx=0):
 
+        print("*"*20)
+        print("Validation Started")
+        start_time = time.time()
+
         input_ids, attention_mask, pixel_values, answers = batch
 
         # autoregressively generate token IDs
@@ -280,7 +287,7 @@ class PaliGemmaModelPLModule(L.LightningModule):
             pred = re.sub(r"(?:(?<=>) | (?=</s_))", "", pred)
             scores.append(edit_distance(pred, answer) / max(len(pred), len(answer)))
 
-            if self.config.get("verbose", False) and len(scores) == 1:
+            if self.config.get("verbose", False) and len(scores) >= 1:
                 print(f"Prediction: {pred}")
                 print(f"    Answer: {answer}")
                 print(f" Normed ED: {scores[0]}")
@@ -293,6 +300,11 @@ class PaliGemmaModelPLModule(L.LightningModule):
                   logger=True,
                   add_dataloader_idx=False
                  )
+        
+        end_time = time.time()
+        print(f"Time taken validation: {end_time - start_time:.2f} seconds")
+        print("Validation Ended")
+        print("\n\n\n")
 
         return scores
 
@@ -306,7 +318,7 @@ class PaliGemmaModelPLModule(L.LightningModule):
         return DataLoader(train_dataset, collate_fn=train_collate_fn, batch_size=self.batch_size, shuffle=True, num_workers=0)
 
     def val_dataloader(self):
-        return DataLoader(val_dataset, collate_fn=eval_collate_fn, batch_size=self.batch_size, shuffle=False, num_workers=0)
+        return DataLoader(val_dataset, collate_fn=eval_collate_fn, batch_size=self.val_batch_size, shuffle=False, num_workers=0)
     
 from transformers import PaliGemmaForConditionalGeneration, TrainingArguments
 
@@ -326,7 +338,7 @@ lora_config = LoraConfig(
     target_modules=["q_proj", "o_proj", "k_proj", "v_proj", "gate_proj", "up_proj", "down_proj"],
     task_type="CAUSAL_LM",
 )
-model = PaliGemmaForConditionalGeneration.from_pretrained(REPO_ID, quantization_config=bnb_config, device_map={"":0})
+model = PaliGemmaForConditionalGeneration.from_pretrained(REPO_ID, quantization_config=bnb_config)
 
 model = get_peft_model(model, lora_config)
 model.print_trainable_parameters()
@@ -340,6 +352,7 @@ config = {"max_epochs": config_yaml["MAX_EPOCHS"],
           "accumulate_grad_batches": config_yaml["ACCUMULATE_GRAD_BATCHES"], # how many batches to accumulate gradients before updating weights
           "lr": config_yaml["LR"], # learning rate
           "batch_size": config_yaml["BATCH_SIZE"], # batch size
+          "val_batch_size": config_yaml["VAL_BATCH_SIZE"], # validation batch size
           # "seed":2022,
           "num_nodes": config_yaml["NUM_NODES"], # number of nodes to use for training
           # "warmup_steps": 50,
@@ -353,6 +366,8 @@ model_module.model.gradient_checkpointing_enable()
 api = HfApi()
 
 hf_model_name = "AqsaK/paligemma_finetuned_census_data_subset"
+
+####################### CALLBACKS  #######################
 
 class ShowFewSamples(Callback):
     """
@@ -459,7 +474,30 @@ push_cb = PushOnCheckpoint(checkpoint_callback=checkpoint_callback,
 
 early_stop_callback = EarlyStopping(monitor="val_edit_distance", patience=7, verbose=True, mode="min")
 
-wandb_logger = WandbLogger(project=WANDB_PROJECT, name=WANDB_NAME)
+
+####################### WANGLOGGER  #######################
+with open("config_wandb.yaml", "r") as f:
+        config_wandb = yaml.safe_load(f)
+
+# Dynamically build tags
+tags = [
+    config_wandb["MODEL"],
+    f"bs={config['val_batch_size']}",
+    f"lr={config['lr']}",
+    config_wandb["EXPERIMENT"]
+]
+
+if config_wandb.get("VALIDATE_EVERY_STEP", False):
+    tags.append("val-every-step")
+
+# Initialize logger with dynamic tags
+wandb_logger = WandbLogger(
+    project=WANDB_PROJECT,
+    name=WANDB_NAME,
+    tags=tags
+)
+
+####################### TRAINER  #######################
 
 print(torch.cuda.memory_summary())
 
@@ -473,7 +511,7 @@ trainer = L.Trainer(
         val_check_interval=config["val_check_interval"],
         precision="16-mixed",
         limit_val_batches=config_yaml["LIMIT_VAL_BATCHES"],
-        # limit_train_batches=config_yaml["LIMIT_TRAIN_BATCHES"],
+        limit_train_batches=config_yaml["LIMIT_TRAIN_BATCHES"],
         num_sanity_val_steps=0,
         logger=wandb_logger,
         callbacks=[PushToHubCallback(), step_logger, push_cb, ShowFewSamples(every_n_epochs=1, num_samples=2)],
